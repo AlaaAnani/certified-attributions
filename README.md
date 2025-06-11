@@ -1,2 +1,3 @@
 # certified-attributions
-Implementation of pixel-level certified explanations via randomized smoothing
+Implementation of ICML'25 paper: Pixel-level Certified Explanations via Randomized Smoothing.
+Coming soon!
