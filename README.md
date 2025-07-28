@@ -75,67 +75,58 @@ python scripts/certified_attribution.py \
     --n 100 \
     --model resnet18 \
     --save_dir outputs
-    --num_images 100 \
+    --num_images 200 \
 ```
 
 ✅ **Expected outputs**: Generating the following cached tensors:
 
-- outputs/noisy_samples_chunks/images/sigma_0.15/Input/LRP/<chunk_id>_raw_resnet18.pt
-
-- outputs/noisy_samples_chunks/images/sigma_0.15/Input/LRP/<chunk_id>_noisy_samples_resnet18.pt
+- `outputs/noisy_samples_chunks/images/sigma_0.15/Input/LRP/<chunk_id>_raw_resnet18.pt`
+  
+- `outputs/noisy_samples_chunks/images/sigma_0.15/Input/LRP/<chunk_id>_noisy_samples_resnet18.pt`
+  
+With `<chunk_id>` spanning values `001 to 040`. 
   
 ### ➤ Skip to Step 2 if you want to read later
 
-### Key arguments : 
+### 1.1 Key arguments
 
-- `--exp:` The attribution method (We support 12 methods: `Grad`, `GB`, `IxG`, `IntGrad`, `LRP`, `RISE`, `Occlusion`, `Cam`, `GradCam`, `GradCamPlusPlus`, `AblationCam`, `LayerCam`)
-- `--layer:` Which layer to explain (`Input` or `Final`)
-- `--dataset_path:` Path to the tensor dataset created in **Dataset Setup** section (either `data/imagenet` for images, or `data/imagenet_grid_2x2` for grids)
-
-- `--sigma:` The standard deviation for the isotropic Gaussian noise (e.g., `0.15`, `0.25`, and `0.33`). The higher the noise, the bigger the certified radius. 
-
-- `--n:` Number of noisy samples to generate per image (Default: `100`)
-
-- `--model:` The model architecture to use (We support 5 models: `resnet18`, `resnet50_2`, `resnet152`, `vgg11`, `vit_b_16`)
-
-- `--save_dir:` Output location to store the noisy samples. (Default: `outputs/`)
-
-- `--num_images:` Number of test images to process (Default: `200`)
+| Argument         | Description |
+|------------------|-------------|
+| `--exp`          | The attribution method (e.g., `Grad`, `GB`, `IxG`, `IntGrad`, `LRP`, `RISE`, `Occlusion`, `Cam`, `GradCam`, `GradCamPlusPlus`, `AblationCam`, `LayerCam`) |
+| `--layer`        | Which layer to explain (e.g., `Input` or `Final`) |
+| `--dataset_path` | Path to the tensor dataset created in **Dataset Setup** section (e.g., `data/imagenet` for images, `data/imagenet_grid_2x2` for grids) |
+| `--sigma`        | The standard deviation for the isotropic Gaussian noise (e.g., `0.15`, `0.25`, `0.33`) |
+| `--n`            | Number of noisy samples to generate per image (e.g., `100`) |
+| `--model`        | The model architecture (`resnet18`, `resnet50_2`, `resnet152`, `vgg11`, `vit_b_16`) |
+| `--save_dir`     | Noisy samples output location. (e.g., `outputs/`) |
+| `--num_images`   | Number of test images to process (Default: `200`) |
 
 Alternatively, you can specify these arguments in a config file `configs/imagenet/imagenet.yaml`.
 
-### Output structure:
+### 1.2  💾 Cached samples output structure
 
-#### 💾 Output Format and Structure
 To optimize I/O, attribution results are saved in chunks of 5 images each (default). Each chunk is stored as a .pt file containing attribution tensors.
 
 The directory structure is as follows:
 
+```python
+outputs/                            # Root directory for saving all cached results
+└─ noisy_samples_chunks/
+    └─ <data_type>/                 # `images` (for setting `--dataset_path data/imagenet`) or `grid` (for setting `--dataset_path data/imagenet_grid_2x2`)
+        └─ sigma_<sigma>/           # Standard deviation of Gaussian noise used (e.g., sigma_0.15)
+            └─ <layer>/             # The model layer explained (e.g., Input or Final)
+                  └─ <method>/      # Attribution method used (e.g., LRP)
+                    └─ <chunk_id>_<data_tag>_<model>.pt # Cached attribution tensor
 ```
-outputs/noisy_samples_chunks/<data_type>/sigma_<sigma>/<layer>/<method>/<chunk_id>_<data_tag>_<model>.pt
-```
 
-#### 📂 Field breakdown:
-
-- `outputs`: Root directory for saving all cached results
-
-- `<data_type>`: Either `images` (for setting `--dataset_path data/imagenet`) or `grid` (for setting `--dataset_path data/imagenet_grid_2x2`)
-
-- `sigma_<sigma>`: Standard deviation of Gaussian noise used (e.g., `sigma_0.15`)
-
-- `<layer>`: The model layer explained (`Input` or `Final`)
-
-- `<method>`: Attribution method used (e.g., `LRP`, `GradCam`)
-
-- `<chunk_id>`: 3-digit chunk index (e.g., 001, 002, ...)
-
-- `<data_tag>`: Either:
-
-  - `raw`: Original attribution map for each input (no noise). Shape: `(5, 1, 1, H, W)` where 5 = number of images in a single chunk.
-
-  - `noisy_samples`: Stack of attribution maps for perturbed versions of the same input. Shape: `(5, n, 1, H, W)` where `n` = number of samples per image.
-
-- `<model>.pt`: Model identifier (e.g., `resnet18`, `vit_b_16`)
+The cached attribution tensor format explained:
+- `<chunk_id>` is a 3-digit chunk index (e.g., 001)   
+- `<data_tag>` either "raw" or "noisy_samples":
+   - `raw`: original attribution map for each input image (no noise).
+      - Shape: `(5, 1, 1, H, W)` where 5 = number of images in a single chunk.
+   - `noisy_samples`: stack of attribution maps for perturbed versions of the same input.
+      - Shape: `(5, n, 1, H, W)` where `n` = number of noisy samples per image.
+- `<model>` is a model identifier (e.g., `resnet18`, `vit_b_16`)
 
 ## 🧪 Step 2: Certify attributions 
 
