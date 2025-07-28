@@ -1,0 +1,38 @@
+# dataset
+dataset_path: "data/imagenet" # choices are 'data/imagenet' or 'data/imagenet_grid_2x2'
+# explanation
+cuda: true
+seed: 73
+model: 'resnet18' # choices 'resnet18', 'resnet50_2', 'resnet152', 'vgg11', 'vgg19', 'vit_b_16'
+setting: 'GridPG' # choices are 'GridPG', 'DiFull', 'DiPart'
+layer: 'Input' # choices are 'Input', 'Final'
+batch_size: 8
+save_dir: outputs
+save_suffix: ''
+exp: 'LRP' # choices are 'Grad', 'GB', 'IxG', 'IntGrad', 'LRP', 'RISE', 'Occlusion', 'Cam', 'GradCam', 'GradCamPlusPlus', 'AblationCam', 'LayerCam'
+config: 'test'
+normalized: true
+
+images_indices_path: 'data/images_indices.pkl'
+grids_indices_path: 'data/grid_indices.pkl'
+
+perturb_first: false
+sigma_first: 0
+# certification
+num_images: 200
+sigma: 0.15 # choices are 0.15, 0.25, 0.33
+n: 100
+n0: 10
+tau: 0.75
+alpha: 0.001
+abstain_label: -1
+
+# for LRP
+
+composite: 'EpsilonPlusBox'
+only_corners: false
+head_idx: 0
+ignore_non_corners: false
+use_box_stabilizer: false
+num_conv_epsilon: 0 
+gamma: None
