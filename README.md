@@ -9,7 +9,7 @@ Alaa Anani, Tobias Lorenz, Mario Fritz and Bernt Schiele. Pixel-level Certified 
 # Overview 
 
 <figure>
-  <img src="ICML2025-Anani.png" alt="ImageAltText">
+  <img src="images/ICML2025-Anani.png" alt="ImageAltText">
 </figure>
 
 ## Coming soon!
