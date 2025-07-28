@@ -160,7 +160,6 @@ Ks = [30, 35, 20, 10, 5] # Sparsification values (top K%), the lower, the more i
 In `figures/figure2.png`:
 ![Certified LRP Attribution Figure](images/figure2.png)
 
-# In progress: code for the rest of the paper figures. :)
 
 
 # Citation
