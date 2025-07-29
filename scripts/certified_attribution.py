@@ -56,8 +56,8 @@ class Certifier:
             required=True,
             help='Mode of operation: "cache_samples" to generate and save noisy samples, "certify" to compute certified attributions'
         )
-        parser.add_argument('--exp', default='GradCamPlusPlus')
-        parser.add_argument('--layer', default='Final', choices=['Input', 'Middle', 'Final'])
+        parser.add_argument('--exp', default='LRP')
+        parser.add_argument('--layer', default='Input', choices=['Input', 'Middle', 'Final'])
         parser.add_argument('--num_images', default=100, type=int)
         parser.add_argument('--batch_size', default=1, type=int)
         parser.add_argument('--sigma', default=0.15, type=float)
