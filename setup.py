@@ -15,7 +15,5 @@ setup(name='attribution_certification',
                         "pickle5 == 0.0.12",
                         "zennit == 0.4.7",
                         "jupyter == 1.1.1",
-                        "box == 0.1.5",
-                        "python-box == 5.4.1",
                         "two-sample-binomial == 0.0.4",
                         "opencv-python == 4.12.0.88"])
