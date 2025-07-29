@@ -56,11 +56,63 @@ The previous args filter the dataset to only include images classified with conf
 
 ✅ **Expected output:** The file `test.pt` in the directory `data/imagenet_grid_2x2`
 
-# Quick Example: 🔍 Generating Certified Attributions
+# Quick Demo 1
+This section explains how to generate the following certified attributions for any attribution method using our framework. 
 
-This section explains how to generate certified attributions using our framework. The process involves sampling attribution maps under Gaussian noise and caching the results for efficient reuse.
+✅ **Expected Output**
+![Certified Overlayed Attributions](images/demo.png)
 
-## 🧪 Step 1: Sample and Cache Attributions Under Gaussian Noise
+## Step 1: Run `scripts/certified_attribution.py`
+
+You can run the certification script for **LRP** on the **Input** layer using the **ResNet-18** model through the following command:
+
+```bash
+python scripts/certified_attribution.py \
+    --mode certify \
+    --exp LRP \
+    --layer Input \
+    --dataset_path data/imagenet \
+    --sigma 0.15 \
+    --n 100 \
+    --tau 0.75 \
+    --model resnet18 \
+    --save_dir outputs
+    --num_images 100 \
+```
+✅ **Expected outputs**: Generating the following cached tensors:
+- `outputs/certified/images_0.15_Input_LRP_resnet18_[50, 25, 5]_100_0.75_certified.pt`
+
+If you wish to generate the certified attribution for different methods, re-run the script with a new `--exp` method value and adjust `--layer` accordingly.
+
+### Key arguments
+
+| Argument         | Description |
+|------------------|-------------|
+| `--mode`         | Mode of operation: "cache_samples" to generate and save noisy samples, "certify" to compute certified attributions directly without caching |
+| `--exp`          | The attribution method (e.g., `Grad`, `GB`, `IxG`, `IntGrad`, `LRP`, `RISE`, `Occlusion`, `Cam`, `GradCam`, `GradCamPlusPlus`, `AblationCam`, `LayerCam`) |
+| `--layer`        | Which layer to explain (e.g., `Input` or `Final`) |
+| `--dataset_path` | Path to the tensor dataset created in **Dataset Setup** section (e.g., `data/imagenet` for images, `data/imagenet_grid_2x2` for grids) |
+| `--sigma`        | The standard deviation for the isotropic Gaussian noise (e.g., `0.15`, `0.25`, `0.33`) |
+| `--n`            | Number of noisy samples to generate per image (e.g., `100`) |
+| `--model`        | The model architecture (`resnet18`, `resnet50_2`, `resnet152`, `vgg11`, `vit_b_16`) |
+| `--save_dir`     | Noisy samples output location. (e.g., `outputs/`) |
+| `--num_images`   | Number of test images to process (Default: `100`) |
+
+Alternatively, you can specify these arguments in a config file `configs/imagenet/imagenet.yaml`.
+## Step 2: Run demo.ipynb
+This notebook seamelessly loads the generated certified tensors in `outputs/certified` for all methods and plots them into the figure in Demo 1.
+
+
+# Quick Demo 2: 🔍 Step-by-step Scalable Certified Attributions
+
+This section explains how to generate certified attributions, but in a scalable way. The process involves sampling attribution maps under Gaussian noise and caching the results for later efficient reuse.
+
+✅ **Expected Output**
+
+In `figures/figure2.png`:
+![Certified LRP Attribution Figure](images/figure2.png)
+
+## Demo 2, Step 1: Sample and Cache Attributions Under Gaussian Noise
 
 To generate certified attribution maps, we first need to sample the model's attributions under Gaussian input perturbations. 
 
@@ -68,6 +120,7 @@ You can run the sampling script for **LRP** on the **Input** layer using the **R
 
 ```bash
 python scripts/certified_attribution.py \
+    --mode cache_samples # notice that now we only cache the noisy samples (without certification), since we will use them to certify later
     --exp LRP \
     --layer Input \
     --dataset_path data/imagenet \
@@ -88,22 +141,7 @@ With `<chunk_id>` spanning values `001 to 040`.
   
 ### ➤ Skip to Step 2 if you want to read later
 
-### 1.1 Key arguments
-
-| Argument         | Description |
-|------------------|-------------|
-| `--exp`          | The attribution method (e.g., `Grad`, `GB`, `IxG`, `IntGrad`, `LRP`, `RISE`, `Occlusion`, `Cam`, `GradCam`, `GradCamPlusPlus`, `AblationCam`, `LayerCam`) |
-| `--layer`        | Which layer to explain (e.g., `Input` or `Final`) |
-| `--dataset_path` | Path to the tensor dataset created in **Dataset Setup** section (e.g., `data/imagenet` for images, `data/imagenet_grid_2x2` for grids) |
-| `--sigma`        | The standard deviation for the isotropic Gaussian noise (e.g., `0.15`, `0.25`, `0.33`) |
-| `--n`            | Number of noisy samples to generate per image (e.g., `100`) |
-| `--model`        | The model architecture (`resnet18`, `resnet50_2`, `resnet152`, `vgg11`, `vit_b_16`) |
-| `--save_dir`     | Noisy samples output location. (e.g., `outputs/`) |
-| `--num_images`   | Number of test images to process (Default: `200`) |
-
-Alternatively, you can specify these arguments in a config file `configs/imagenet/imagenet.yaml`.
-
-### 1.2  💾 Cached samples output structure
+### Demo 2: 💾 Cached samples output structure
 
 To optimize I/O, attribution results are saved in chunks of 5 images each (default). Each chunk is stored as a .pt file containing attribution tensors.
 
@@ -128,7 +166,7 @@ The cached attribution tensor format explained:
       - Shape: `(5, n, 1, H, W)` where `n` = number of noisy samples per image.
 - `<model>` is a model identifier (e.g., `resnet18`, `vit_b_16`)
 
-## 🧪 Step 2: Certify attributions 
+## 🧪 Demo 2, Step 2: Certify attributions 
 
 Once noisy attributions are cached (all expected outputs "✅" are successfully generated), the next step is to certify the **LRP** attribution maps.
 
@@ -154,12 +192,7 @@ image_indices = sorted([163]) # Nemo # this image is used in our teaser
 save_dir = 'figures' # where to save the visualized certified attribution
 Ks = [30, 35, 20, 10, 5] # Sparsification values (top K%), the lower, the more important a certified top K pixel is. All values get overlayed.
 ```
-
-✅ **Expected Output**
-
-In `figures/figure2.png`:
-![Certified LRP Attribution Figure](images/figure2.png)
-
+Run!
 
 
 # Citation
