@@ -105,14 +105,15 @@ This notebook seamelessly loads the generated certified tensors in `outputs/cert
 
 # Quick Demo 2: 🔍 Step-by-step Scalable Certified Attributions
 
-This section explains how to generate certified attributions, but in a scalable way. The process involves sampling attribution maps under Gaussian noise and caching the results for later efficient reuse.
+This section explains how to generate certified attributions, but in a scalable way. 
+The process involves (1) sampling attribution maps under Gaussian noise, (2) efficiently caching the results, (3) efficiently loading them to certify and visualize under different parameters without needing to re-sample again.
 
 ✅ **Expected Output**
 
 In `figures/figure2.png`:
 ![Certified LRP Attribution Figure](images/figure2.png)
 
-## Demo 2, Step 1: Sample and Cache Attributions Under Gaussian Noise
+## Step 1: Sample and Cache Attributions Under Gaussian Noise
 
 To generate certified attribution maps, we first need to sample the model's attributions under Gaussian input perturbations. 
 
@@ -139,9 +140,9 @@ python scripts/certified_attribution.py \
   
 With `<chunk_id>` spanning values `001 to 040`. 
   
-### ➤ Skip to Step 2 if you want to read later
+#### ➤ Skip to Step 2 if you want to read later
 
-### Demo 2: 💾 Cached samples output structure
+#### 💾 Cached samples output structure
 
 To optimize I/O, attribution results are saved in chunks of 5 images each (default). Each chunk is stored as a .pt file containing attribution tensors.
 
@@ -166,7 +167,7 @@ The cached attribution tensor format explained:
       - Shape: `(5, n, 1, H, W)` where `n` = number of noisy samples per image.
 - `<model>` is a model identifier (e.g., `resnet18`, `vit_b_16`)
 
-## 🧪 Demo 2, Step 2: Certify attributions 
+## Step 2: Load samples and certify attributions 
 
 Once noisy attributions are cached (all expected outputs "✅" are successfully generated), the next step is to certify the **LRP** attribution maps.
 
