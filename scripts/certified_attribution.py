@@ -1,25 +1,24 @@
-import torch
-from attribution_certification.attribution import attributors
-from attribution_certification.attribution.lrp_utils import *
 import argparse
 import os
+import pickle
+import random
+import sys
+from pprint import pprint
+
 import numpy as np
-from attribution_certification.models import models, settings
+import torch
+import torchvision
+from torch.utils.data import Subset
+from torchvision import transforms
 from tqdm import tqdm
 import yaml
-from box import Box
-from torchvision import transforms as transforms
-import sys
-from attribution_certification.evaluation import utils
-from twosample import binom_test
-from attribution_certification.evaluation import visualization_captum
-from captum.attr import visualization as viz
-import torchvision
-import ast
-from torch.utils.data import Subset
-import random
-import pickle
 
+# Project-specific modules
+from attribution_certification.attribution import attributors
+from attribution_certification.attribution.lrp_utils import *
+from attribution_certification.models import models, settings
+from attribution_certification.certifier.utils import process_attributions
+from utils import DotDict
 # Set a random seed for reproducibility
 SEED = 73
 torch.manual_seed(SEED)
@@ -32,24 +31,51 @@ torch.backends.cudnn.benchmark = False
 
 class Certifier:
     def __init__(self):
+        """
+        Initialize Certifier: parse config, load dataset, initialize model, and run selected mode.
+        """
         self.parse_args()
         self.test_loader = self.init_dataset()
         self.model = self.init_model()
-        self.sample_with_noise_chunks(self.model, self.test_loader)
-
+        if self.config.mode == 'cache_samples':
+            self.sample_with_noise_chunks(self.model, self.test_loader)
+        elif self.config.mode == 'certify':
+            self.smoothed_inference(self.model, self.test_loader)
+            
     def parse_args(self):
+        """
+        Parse command-line arguments and merge them with YAML config.
+        """
+
         parser = argparse.ArgumentParser(
             description="Runs an attribution method using a specified configuration at a specified layer.")
-        parser.add_argument('--exp', default='GradCam')
+        parser.add_argument(
+            '--mode',
+            type=str,
+            choices=['cache_samples', 'certify'],
+            required=True,
+            help='Mode of operation: "cache_samples" to generate and save noisy samples, "certify" to compute certified attributions'
+        )
+        parser.add_argument('--exp', default='GradCamPlusPlus')
         parser.add_argument('--layer', default='Final', choices=['Input', 'Middle', 'Final'])
-        parser.add_argument('--num_images', default=200, type=int)
+        parser.add_argument('--num_images', default=100, type=int)
         parser.add_argument('--batch_size', default=1, type=int)
         parser.add_argument('--sigma', default=0.15, type=float)
-        parser.add_argument('--dataset_path', default="data/imagenet_grid_2x2", type=str)
+        parser.add_argument('--dataset_path', default="data/imagenet", type=str)
+        parser.add_argument(
+            '--Ks',
+            nargs='+',
+            type=int,
+            default=[50, 25, 5],
+            help='Sparsify the continuous attributions by setting top K%% of attribution pixels to 1, else 0.'
+        )
         parser.add_argument('--n', default=100, type=int)
-        parser.add_argument('--model', default="vit_b_16", type=str)
+        parser.add_argument('--model', default="resnet18", type=str)
         parser.add_argument('--cuda', action='store_true', default=False)
-        parser.add_argument('--seed', type=int, default=1)
+        parser.add_argument('--seed', type=int, default=73)
+        parser.add_argument('--save_dir', type=str, default='outputs')
+
+        # LRP 
         parser.add_argument('--composite', type=str, default='EpsilonPlusBox',
                             choices=["None", "EpsilonGammaBox", "EpsilonPlus", "EpsilonAlpha2Beta1", "EpsilonPlusFlat", "EpsilonAlpha2Beta1Flat", "ExcitationBackprop", "EpsilonPlusBox", "Epsilon025PlusBox"])
         parser.add_argument('--only_corners', action='store_true', default=False)
@@ -58,11 +84,10 @@ class Certifier:
         parser.add_argument('--use_box_stabilizer', action='store_true', default=False)
         parser.add_argument('--num_conv_epsilon', type=int, default=0)
         parser.add_argument('--gamma', type=float, default=None)
-        parser.add_argument('--save_dir', type=str, default='outputs')
 
-        args = parser.parse_args()
-        config = Box(yaml.safe_load(open('configs/imagenet/imagenet.yaml')))
-    
+        args = parser.parse_args() # the args preceed the .yaml config in priority
+        with open('configs/imagenet/imagenet.yaml') as f:
+            config = DotDict(yaml.safe_load(f))   
         for arg_name, arg_value in vars(args).items():
             if arg_name in config:
                 config[arg_name] = arg_value
@@ -71,9 +96,12 @@ class Certifier:
             config['batch_size'] = 1
             
         self.config = config
-        print(self.config)
+        pprint(self.config)
 
     def init_dataset(self):
+        """
+        Load and prepare the test dataset and indices, return DataLoader.
+        """
         test_data_dict = torch.load(os.path.join(self.config.dataset_path, 'test.pt'))
 
         test_data = torch.utils.data.TensorDataset(
@@ -87,7 +115,7 @@ class Certifier:
             indices = pickle.load(open(indices_path, 'rb'))
         if 'grid' in self.config.dataset_path or 'certified' in self.config.dataset_path: indices = list(range(self.config.num_images))
         
-        subset = Subset(test_data, indices)
+        subset = Subset(test_data, indices[:self.config.num_images])
         
         test_loader = torch.utils.data.DataLoader(
            subset, batch_size=1, shuffle=False,)
@@ -100,6 +128,9 @@ class Certifier:
         return test_loader
         
     def init_model(self):
+        """
+        Initialize the model and attribution method based on the config.
+        """
         if not settings.eval_only_corners(self.config.setting):
             self.head_list = [0]
         else:
@@ -175,7 +206,23 @@ class Certifier:
         return attributions # (B, K, 1, H, W)
     
     def sample(self, attributor, test_X, test_y, n, sigma, show_progress_bar=False):
+        """
+        Sample noisy attributions `n` times for a single image and return the aggregated tensor.
 
+        Parameters:
+            - test_X: Tensor of shape (1, C, H, W) — input image
+            - test_y: Tensor of shape (1, num_classes) or (1,) — label or target vector
+            - n: Number of noisy samples to draw
+            - sigma: Standard deviation of Gaussian noise
+            - show_progress_bar: Whether to show tqdm progress
+
+        Returns:
+            - sampled_attributions: Tensor of shape (n, B, 1, H, W), where:
+                - n: number of noisy samples
+                - B: number of output heads (always 1 here)
+                - 1: single attribution channel
+                - H, W: spatial dimensions (scaled if needed)
+        """
         out = []
         BS = self.config.batch_size
         remaining = n
@@ -189,109 +236,92 @@ class Certifier:
         sampled_attributions = torch.cat(out, dim=0)
         return sampled_attributions
     
-    def process_attributions(self, attributions, test_X, steps=[], threshold_percentile=0.5, num_percentiles=10):
-        if len(steps) == 0:
-            return attributions
-        assert all([step in ['smooth', 'interpolate', 'positive', 'normalize', 'sparsify'] for step in steps])
-        
-        for step in steps:
-            if step == 'smooth':
-                attributions = attributions.mean(0).unsqueeze(0)
-            elif step == 'interpolate':
-                attributions = utils.interpolate_attributions(
-                        attributions, test_X.shape[2:])
-            elif step == 'positive':
-                attributions = utils.get_positive_attributions(
-                    attributions)
-            elif step == 'normalize':
-                norm_attributions = torch.empty(attributions.shape)
-                for idx in range(attributions.shape[0]):
-                    attr = attributions[idx].cpu().numpy()
-                    scale_factor = visualization_captum.threshold_value_based(
-                        attr, 100 - threshold_percentile)
-                    if scale_factor != 0:
-                        norm_attr = viz._normalize_scale(attr, scale_factor)
-                    else:
-                        norm_attr = attr
-                    norm_attributions[idx] = torch.from_numpy(norm_attr)
-                attributions = norm_attributions
-            elif step == 'sparsify':
-                attributions = self.sparsify(attributions, 
-                                             method=self.config.sparsify_method,
-                                             sparsify_param=self.config.sparsify_param)
-        return attributions
-    
-    
-    def inference(self, attributor, test_loader):
-        attributions = []
-        for (test_X, test_y) in tqdm(test_loader, desc="dataset loader"):
-            if self.config.cuda:
-                test_X = test_X.cuda().requires_grad_(True) # (B, C, Grid W, Grid H)
-                test_y = test_y.cuda() # (B, n*n)
-            batch_attributions = []
-            for head_pos_idx in self.head_list:
-                if self.model_setting.single_head:
-                    batch_attributions.append(
-                        attributor.attribute_selection(img=test_X, target=test_y, conv_layer_idx=self.config.layer).sum(dim=2, keepdim=True))
-                else:
-                    batch_attributions.append(attributor.attribute_selection(img=test_X, target=test_y[:, head_pos_idx].reshape(
-                        -1, 1), output_head_idx=head_pos_idx, conv_layer_idx=self.config.layer).sum(dim=2, keepdim=True))
-            attributions.append(torch.cat(batch_attributions, dim=1))
-            
-        attributions = torch.cat(attributions, dim=0).detach().cpu()
 
     def smoothed_inference(self, attributor, test_loader):
+        """
+        Run full certified attribution pipeline on the dataset and save results.
+
+        This function performs the following:
+        - Computes a raw attribution (single clean input)
+            Shape: (1, 1, 1, H, W)
+        - Samples noisy inputs and computes attributions on them
+            Shape: (1, n, 1, H, W)
+        - Applies smoothing, sparsification, and certification over each image
+        - Generates an overlayed certified map where each pixel has a discrete importance degree label
+            Shape: (1, H*scale, W*scale)
+        - Aggregates and saves results:
+            - raw_attributions: (num_images, 1, 1, H, W)
+            - certified_attributions: (num_images, H*scale, W*scale)
+        """
         idx = 0
         raw_attributions = []
-        smoothed_attributions = []
         certified_attributions = []
-        spars_samples = []
-        raw_samples = []
-        for (test_X, test_y) in tqdm(test_loader, desc="dataset loader"):
-            # raw attribution
-            batch_attributions = self.sample(attributor, test_X, test_y, n=1, sigma=0) # (BS, nxn, channels=1, W, H)
-            # sample attributions on noisy input
-            batch_samples = self.sample(attributor, test_X, test_y, 
+
+        for (test_X, test_y) in tqdm(test_loader, desc="certifying dataset"):
+            # Raw attribution
+            batch_attributions = self.sample(attributor, test_X, test_y, n=1, sigma=0).unsqueeze(1)  # (BS, nxn, channels=1, W, H)
+            batch_attributions = batch_attributions[:, :, :1, :, :, :]
+            
+            # Sample attributions on noisy input
+            batch_noisy_samples = self.sample(attributor, test_X, test_y, 
                                         self.config.n, 
-                                        self.config.sigma, 
-                                        )
-            batch_smoothed_attributions = self.process_attributions(batch_samples, test_X, steps=['smooth'])
-            batch_sparsified_attributions = self.process_attributions(batch_samples, test_X, steps=['interpolate', 'sparsify'])
-            batch_certified_attributions = self.segcertify(attributor, test_X, test_y, 
-                                                    self.config.n0, self.config.n, self.config.sigma, 
-                                                    self.config.tau, self.config.alpha, 
-                                                    size=test_X.shape[-2:],
-                                                    samples=batch_sparsified_attributions)
-            spars_samples.append(batch_sparsified_attributions.mean(dim=0).unsqueeze(0))
-            raw_samples.append(batch_samples)
+                                        self.config.sigma).unsqueeze(0)
+            batch_noisy_samples = batch_noisy_samples[:, :, :1, :, :, :]
+            
+            img_dims, scale, n, tau = test_X.shape[2:], self.scale, self.config.n, self.config.tau
+            Ks = sorted(self.config.Ks, reverse=True) # sort the Ks in ascneding importance (starting from higher K)
+            batch_attributions, scale_factor = process_attributions(batch_attributions, 
+                                steps_dict=
+                                { 
+                                'interpolate': {'img_dims': tuple(img_dims), 'scale': scale},
+                                'normalize':  {'clip_percentile': 99.5, 'scale_factor': None},
+                                'positive': {},
+                                })
+            noisy_samples = process_attributions(batch_noisy_samples, 
+                                steps_dict=
+                                {
+                                'interpolate': {'img_dims': tuple(img_dims), 'scale': scale},
+                                'normalize':   {'clip_percentile': 99.5, 'scale_factor': scale_factor},
+                                'positive': {},
+                                },
+                                return_scale=False)
+            overlayed = torch.zeros((1, self.scale*img_dims[0], self.scale*img_dims[1]))
+
+            for deg_idx, K in enumerate(Ks):
+                sparsified = process_attributions(noisy_samples, 
+                        steps_dict={'sparsify': {'spars_method': 'all_percentile', 'spars_param': [K], 'head_idx': 0}}, 
+                        return_scale=False)
+                certified = process_attributions(sparsified, 
+                        steps_dict={'certify': {'n':n, 'n0':10, 'tau':tau, 'alpha': 0.001, 'head_idx':0}}, 
+                        return_scale=False)
+                overlayed[certified == 1] = deg_idx + 1
+
             raw_attributions.append(batch_attributions)
-            smoothed_attributions.append(batch_smoothed_attributions)
-            certified_attributions.append(batch_certified_attributions)
+            certified_attributions.append(overlayed)
             idx +=1
             if idx == self.config.num_images: break
         raw_attributions = torch.cat(raw_attributions, dim=0).detach().cpu()
-        smoothed_attributions = torch.cat(smoothed_attributions, dim=0).detach().cpu()
-        certified_attributions = torch.cat(certified_attributions, dim=0).detach().cpu()
-        raw_samples = torch.cat(raw_samples, dim=0).detach().cpu()
-        spars_samples = torch.cat(spars_samples, dim=0).detach().cpu()
+        certified_attributions = torch.cat(certified_attributions, dim=0).detach().cpu()    
         
-        os.makedirs(self.config.save_dir, exist_ok=True)
-        for x, y in [('raw',   raw_attributions), 
-                     ('smoothed',       smoothed_attributions), 
-                     ('certified',      certified_attributions),
-                     ('noisy_samples',    raw_samples),
-                     ('spars_mean',  spars_samples)]:
-            if x == 'certified' or x == 'spars_mean':
-                x = f'{x}_{self.config.sparsify_method}_{str(self.config.sparsify_param)}'
-            full_save_dir = os.path.join(self.config.save_dir, self.config.exp,
-                                        f'{x}_{self.config.model}_{self.config.setting}_{os.path.basename(self.config.dataset_path)}_{self.config.exp}_{self.config.config}' 
-                                        + f'_{self.config.layer}{self.config.save_suffix}.pt')
-            os.makedirs(os.path.dirname(full_save_dir), exist_ok=True)
-            print("Saving attributions at", full_save_dir)
-            torch.save(y, full_save_dir)
-        # torch.save(attributions, full_save_dir)
+        # save certified attributions
+        dir_type = 'grid' if 'grid' in self.config.dataset_path else 'images'
+        ext = f'{dir_type}_{self.config.sigma}_{self.config.layer}_{self.config.exp}_{self.config.model}_{self.config.Ks}_{self.config.n}_{self.config.tau}'
+        save_path = os.path.join(self.config.save_dir, 'certified', f'{ext}_certified.pt')
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        print('Saving certified attribution at', save_path)
+        torch.save(certified_attributions, save_path)
         
     def sample_with_noise(self, attributor, test_loader):
+        """
+        Sample raw and noisy attributions and save them as tensors.
+
+        - For each image:
+            - Raw attribution: Shape (1, 1, 1, H, W)
+            - Noisy attribution samples: Shape (1, n, 1, H, W)
+        - Saves entire dataset as:
+            - raw_attributions: (num_images, 1, 1, H, W)
+            - raw_samples: (num_images, 1, n, 1, H, W)
+        """
         dir_type = 'grid' if 'grid' in self.config.dataset_path else 'images'
         self.config.save_dir = f'{self.config.save_dir}/noisy_samples/{dir_type}/sigma_{self.config.sigma}/{self.config.layer}'
         os.makedirs(self.config.save_dir, exist_ok=True)
@@ -353,6 +383,15 @@ class Certifier:
             torch.save(y, full_save_dir)
 
     def sample_with_noise_chunks(self, attributor, test_loader):
+        """
+        Sample raw and noisy attributions in chunks for efficiency.
+
+        - Same structure as `sample_with_noise`, but saves in batches.
+        - File tensors:
+            - raw chunk: (chunk_size, 1, 1, H, W)
+            - noisy_samples chunk: (chunk_size, 1, n, 1, H, W)
+        - Useful when dataset is large and memory is constrained (This is what we use in all our experiments).
+        """
         dir_type = 'grid' if 'grid' in self.config.dataset_path else 'images'
         subd = 'noisy_samples_chunks'
         if 'certified' in self.config.dataset_path:
@@ -452,7 +491,17 @@ class Certifier:
             torch.save(torch.cat(raw_samples_chunk, dim=0), full_save_dir)
             print(f"Saved final noisy samples chunk at {full_save_dir}")
             
-    def get_relevance(self, test_X, test_y, model, scale, head_pos_idx, attributor, args):     
+    def get_relevance(self, test_X, test_y, model, scale, head_pos_idx, attributor, args):  
+        """
+        Compute LRP relevance for a single input using the specified model and head index.
+
+        Input:
+            - test_X: (B, C, H, W)
+            - test_y: (B, n*n) or (B,)
+
+        Returns:
+            - relevance: (B, 1, H, W)
+        """   
         if args.cuda:
             test_X = test_X.cuda().requires_grad_(True)
             test_y = test_y.cuda()
