@@ -173,7 +173,7 @@ Once noisy attributions are cached (all expected outputs "✅" are successfully 
 
 ### ⚙️ A Plug-and-Play Interface
 
-Use the notebook `experiments/certified_attributions_example.ipynb` which:
+Use the notebook `experiments/certify_from_samples.ipynb` which:
 
 1. Loads the ImageNet dataset
    
