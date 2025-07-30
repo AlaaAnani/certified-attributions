@@ -1,6 +1,6 @@
 # Pixel-level Certified Explanations via Randomized Smoothing 
 
-[OpenReview PDF](https://openreview.net/pdf?id=NngoETL9IK) | [arXiv](https://arxiv.org/abs/2506.15499) | [Poster](https://icml.cc/media/PosterPDFs/ICML%202025/45484.png?t=1752244525.7101903)
+[OpenReview PDF](https://openreview.net/pdf?id=NngoETL9IK) | [arXiv](https://arxiv.org/abs/2506.15499) | [Poster](https://icml.cc/media/PosterPDFs/ICML%202025/45484.png?t=1752244525.7101903) | [Code](https://github.com/AlaaAnani/certified-attributions)
 
 Code for the paper: 
 
